@@ -1,0 +1,223 @@
+clear; close all; clc;
+
+%% Simulation settings
+
+Ts = 0.005;       % Sample time
+tsim = [0 6];    % Simulation span
+
+t_c =[];
+t = (tsim(1):Ts:tsim(2))';
+N = length(t);
+
+%% Vehicle parameters
+
+param.g  = 9.7747;                 % Gravity acceleration
+param.dr = 1.01;                   % Reference diameter of the vehicle
+param.Ar = (pi*param.dr^2)/4;      % Need to be checked (Reference area of the vehicle)
+
+param.Ae = 0.50;
+
+param.Cx0     = 0.1;%
+param.CnAlpha = 30.5678;%
+param.CnBeta  = 2.5;%
+
+param.Clp = 1.0;%
+param.Cmq = 0.5;%
+param.Cnr = 0.5;%
+
+param.lcx = 1.0;%
+param.lax =  2.0;%
+param.rex = param.lcx;%
+
+
+param.m0 = 50000;       % Initial mass
+param.mdot = -32000/60; % Mass variation
+
+param.Ixx = 23770.038;
+param.Iyy = 432429.63;
+param.Izz = 432893.18;
+
+param.Ixx_dot = -700;
+param.Iyy_dot = -1500;
+param.Izz_dot = -2500;
+
+param.Tvac = 303000*4;
+%% Control Gain
+
+K = zeros(3,9);
+u_cmd = [0,0,0]; % [beta_theta, beta_psi, beta_phi]; 
+
+%% Initial conditions
+
+%    [X0; Y0; Z0; u0; v0; w0; phi0; theta0; psi0; p0; q0; r0]
+x0 = [0;  0;  0;  0;  0;  0;  0;    0;      0;    0;  0;  0];
+
+x = zeros(12,N);
+u = zeros(3, N-1);
+x_c = [];
+
+x(:,1) = x0;
+
+%% Reference
+
+x_ref = zeros(9,1);
+
+%% ODE options
+
+config_ode = odeset('RelTol', 1e-7,'AbsTol', 1e-9, 'MaxStep', 0.001);
+
+%% Closed-loop simulation
+
+for k = 1:N-1
+
+    % Current control states
+    x_ctrl = x(4:12,k);
+
+    % State error
+    e = x_ctrl - x_ref;
+
+    % Commands
+    u_cmd = -K*e;
+    u(:,k) = u_cmd;
+
+    % Nonlinear plant (during one sample)
+    [t_temp,x_temp] = ode45(@(t,x) vls6dof_rhs(t,x,u_cmd,param), [t(k) t(k+1)], x(:,k), config_ode);
+    
+    % Store data
+    if k == 1
+        x_c = [x_c,x_temp'];
+        t_c = [t_c,t_temp'];
+    else
+        x_c = [x_c,x_temp(2:end,:)'];
+        t_c = [t_c,t_temp(2:end)'];
+    end
+    
+    % Next state
+    x(:,k+1) = x_temp(end,:)';
+    display(k/N)
+end
+
+
+
+%% Pos-processamento
+x_l   = x_c(1,:);
+y_l   = x_c(2,:);                   
+z_l   = x_c(3,:);
+u     = x_c(4,:);
+v     = x_c(5,:);
+w     = x_c(6,:);
+phi   = x_c(7,:);
+theta = x_c(8,:);
+psi   = x_c(9,:);
+p     = x_c(10,:);
+q     = x_c(11,:);
+r     = x_c(12,:);
+
+V = sqrt(u.^2 + v.^2 + w.^2);
+alpha = atan2(w,u);
+beta  = asin(max(min(v./max(V,1e-6),1),-1));
+
+ %% Linearize
+% idx_lin = find(t >= 36.1622, 1);
+% t_lin   = t(idx_lin);
+% x_lin   = x(idx_lin,:)';
+% u_lin   = [0; 0];
+% 
+% [A, B] = linearize_vls(t_lin, x_lin, u_lin, param);
+% 
+% C_lin = eye(9);
+% D_lin = zeros(9, 2);
+% 
+% sys = ss(A, B, C_lin, D_lin);
+% 
+% sys.StateName  = {'u','v','w','phi','theta','psi','p','q','r'};
+% sys.InputName  = {'beta_y','beta_z'};
+% sys.OutputName = {'u','v','w','phi','theta','psi','p','q','r'};
+% 
+% disp('Autovalores em t=10s:')
+% eig(A)
+%% Graphics
+
+figure;
+plot(t_c,x_l,'LineWidth',1.5);
+grid on;
+xlabel('Tempo [s]');
+ylabel('X_L [m]');
+title('Posicao vertical local');
+
+figure;
+plot(t_c,V,'LineWidth',1.5);
+grid on;
+xlabel('Tempo [s]');
+ylabel('|V| [m/s]');
+title('Modulo da velocidade');
+
+figure;
+plot(t_c,rad2deg(alpha),'LineWidth',1.5);
+grid on;
+xlabel('Tempo [s]');
+ylabel('\alpha [deg]');
+title('Angulo de ataque');
+
+figure;
+plot(t_c,rad2deg(beta),'LineWidth',1.5);
+grid on;
+xlabel('Tempo [s]');
+ylabel('\beta [deg]');
+title('Angulo de derrapagem');
+
+figure;
+
+subplot(3,3,1)
+plot(t_c,u,'LineWidth',1.2)
+title('u')
+xlabel('Time (s)')
+grid on
+
+subplot(3,3,2)
+plot(t_c,v,'LineWidth',1.2)
+title('v')
+xlabel('Time (s)')
+grid on
+
+subplot(3,3,3)
+plot(t_c,w,'LineWidth',1.2)
+title('w')
+xlabel('Time (s)')
+grid on
+
+subplot(3,3,4)
+plot(t_c,rad2deg(phi),'LineWidth',1.2)
+title('\phi [deg]')
+xlabel('Time (s)')
+grid on
+
+subplot(3,3,5)
+plot(t_c,rad2deg(theta),'LineWidth',1.2);
+grid on;
+title('\theta [deg]')
+xlabel('Tempo [s]');
+
+subplot(3,3,6)
+plot(t_c,rad2deg(psi),'LineWidth',1.2)
+title('\psi [deg]')
+xlabel('Time (s)')
+grid on
+
+subplot(3,3,7)
+plot(t_c,rad2deg(p),'LineWidth',1.2);
+title('p [deg/s]');
+xlabel('Tempo [s]');
+grid on;
+
+subplot(3,3,8)
+plot(t_c,rad2deg(q),'LineWidth',1.2);
+title('q [deg/s]');
+xlabel('Tempo [s]');
+grid on;
+
+subplot(3,3,9)
+plot(t_c,rad2deg(r),'LineWidth',1.2);
+title('r [deg/s]');
+xlabel('Tempo [s]');
+grid on;
